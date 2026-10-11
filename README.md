@@ -12,13 +12,15 @@ curl -fsSL https://raw.githubusercontent.com/mcarli-dev/aether-bootstrap/main/bo
 ```
 
 It installs the base packages and Docker, clones `aether-services` into
-`~/aether` (asking for a GitHub token while that repository is private) and
-looks for an Aether gateway on the network over mDNS:
+`~/aether` (asking for a GitHub token while that repository is private, and
+for the registry token that lets the Pi pull the release images instead of
+building them) and looks for an Aether gateway on the network over mDNS:
 
 - **gateway found** → the Pi joins as a node: a 6-digit code is shown; approve
   it on the gateway (`aether nodes approve <code>` or the GUI Nodes tab) only if
   it matches;
-- **no gateway** → it offers to make this Pi the gateway of a new Aether.
+- **no gateway** → it offers to make this Pi the gateway of a new Aether,
+  optionally restoring a backup of the system state (`aether backup`).
 
 Then it runs `aether apply`. Safe to re-run: every step checks before acting.
 

@@ -55,6 +55,15 @@ if [ ! -s "$TOKEN_FILE" ]; then
     install -m 600 -o "$U" -g "$U" /dev/null "$TOKEN_FILE"
     printf '%s\n' "$T" > "$TOKEN_FILE"
 fi
+RTOKEN="$H/.aether-registry-token"          # classic token, read:packages only: release images
+if [ ! -s "$RTOKEN" ]; then
+    R="${AETHER_REGISTRY_TOKEN:-}"
+    [ -n "$R" ] || R="$(ask "Registry token (classic, read:packages) for the release images — empty: build them on this Pi:")"
+    if [ -n "$R" ]; then
+        install -m 600 -o "$U" -g "$U" /dev/null "$RTOKEN"
+        printf '%s\n' "$R" > "$RTOKEN"
+    fi
+fi
 HELPER='!f() { echo username=x-access-token; echo "password=$(cat ~/.aether-token)"; }; f'
 if [ -d "$H/aether/.git" ] && as_user git -C "$H/aether" remote get-url origin | grep -q "/aether.git$"; then
     as_user git -C "$H/aether" pull --rebase --quiet && echo "    updated"
@@ -68,6 +77,7 @@ as_user git -C "$H/aether" config user.name "$(hostname)"
 as_user git -C "$H/aether" config user.email "$(hostname)@aether.local"
 ln -sf "$H/aether/bin/aether" /usr/local/bin/aether
 A="$H/aether"
+DEVFILE="$H/.aether/state/devices/$(hostname).yaml"     # desired state: outside the repository
 
 # ---- 3. docker ----------------------------------------------------------------------------
 say "3/5 Docker"
@@ -78,18 +88,20 @@ systemctl enable --now docker >/dev/null
 
 # ---- 4. join an Aether, or start one --------------------------------------------------------
 say "4/5 looking for an Aether gateway"
-if ip link show eth0 >/dev/null 2>&1 && [ ! -f "$A/devices/$(hostname).yaml" ]; then
+if ip link show eth0 >/dev/null 2>&1 && [ ! -f "$DEVFILE" ]; then
     # Wired: the gateway hands out the address. Fails harmlessly (and restores
     # the previous profile) if there is no gateway yet.
     bash "$A/modules/network/node-eth0.sh" >/dev/null 2>&1 || true
 fi
-GW="$(avahi-browse -rtpk _aether-enroll._tcp 2>/dev/null | awk -F';' '$1=="=" && $3=="IPv4"{print $8; exit}')"
-if [ -f "$A/devices/$(hostname).yaml" ]; then
-    echo "    $(hostname) is already configured in devices/$(hostname).yaml"
+# Any announcement means a gateway exists; `aether enroll` then picks the
+# address this Pi can actually reach (a WiFi node cannot reach the wired one).
+GW="$(avahi-browse -rtpk _aether-enroll._tcp 2>/dev/null | awk -F';' '$1=="=" && $3=="IPv4"{print $8}' | paste -sd' ')"
+if [ -f "$DEVFILE" ]; then
+    echo "    $(hostname) is already configured ($DEVFILE)"
 elif [ -n "$GW" ]; then
     echo "    gateway found: $GW — this Pi joins as a NODE"
     echo "    A code will be shown: approve it on the gateway (GUI, Nodes tab, or: aether nodes approve <code>)."
-    as_user env PYTHONUNBUFFERED=1 aether enroll --gateway "$GW" </dev/tty
+    as_user env PYTHONUNBUFFERED=1 aether enroll </dev/tty
 else
     echo "    no gateway found on the network (mDNS _aether-enroll._tcp)."
     a="$(ask "Make this Pi the GATEWAY of a new Aether? [y/N]")"
@@ -99,15 +111,21 @@ else
         if [[ "$a" =~ ^[nN] ]]; then as_user bash "$A/modules/identity/aether-pki.sh" init-ca
         else [ -f "$H/.aether-ca/node-ca.key" ] || die "~/.aether-ca/node-ca.key not found"; fi
     fi
-    as_user python3 - "$A" "$(hostname)" <<'PY'
+    b="$(ask "Backup of the system state (aether backup) to restore, if any — path or empty:")"
+    if [ -n "$b" ]; then
+        as_user aether restore "$b" || die "restore failed"
+    fi
+    if [ ! -f "$DEVFILE" ]; then
+        as_user python3 - "$A" "$(hostname)" <<'PY'
 import sys; sys.path.insert(0, sys.argv[1])
 from aether import device
 d = device.Device(host=sys.argv[2], node_id="gateway",
     modules={m: {} for m in ["zenoh-router", "enrollment", "dhcp", "firewall", "ptp", "vehicle-state-manager",
                              "gateway-logic", "liveness-monitor", "system-monitor", "dashboard-bridge"]})
 d.save()
-print(f"    devices/{d.host}.yaml created with the system modules")
+print(f"    {d.host} configured as the gateway, with the system modules")
 PY
+    fi
 fi
 
 # ---- 5. apply ---------------------------------------------------------------------------------
@@ -121,5 +139,6 @@ cat <<EOF
     aether apply              applies
   or the GUI: https://$(hostname).local:8099  (the password is printed above; for a new one:
   aether gui --set-password)
-  Save the state: cd ~/aether && git add devices && git commit -m "$(hostname): enrolled" && git push
+  The desired state of every device lives on the gateway: back it up there with
+  aether backup (keys excluded: keep ~/.aether-ca offline).
 EOF
