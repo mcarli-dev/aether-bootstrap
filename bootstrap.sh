@@ -121,7 +121,8 @@ import sys; sys.path.insert(0, sys.argv[1])
 from aether import device
 d = device.Device(host=sys.argv[2], node_id="gateway",
     modules={m: {} for m in ["zenoh-router", "enrollment", "dhcp", "firewall", "ptp", "vehicle-state-manager",
-                             "gateway-logic", "liveness-monitor", "system-monitor", "dashboard-bridge"]})
+                             "gateway-logic", "liveness-monitor", "system-monitor", "dashboard-bridge",
+                             "system-status"]})
 d.save()
 print(f"    {d.host} configured as the gateway, with the system modules")
 PY
